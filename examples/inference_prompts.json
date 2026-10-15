@@ -1,0 +1,22 @@
+[
+  {
+    "case_id": "example-0",
+    "prompt": "A red panda sitting on a moss-covered branch in a lush forest, soft morning light, detailed wildlife photograph.",
+    "seed": 42
+  },
+  {
+    "case_id": "example-1",
+    "prompt": "A cozy living room with a green velvet sofa, wooden furniture, large windows and warm afternoon sunlight, interior photography.",
+    "seed": 43
+  },
+  {
+    "case_id": "example-2",
+    "prompt": "A mountain lake reflecting snow-covered peaks at sunrise, pine trees along the shore, realistic landscape photograph.",
+    "seed": 44
+  },
+  {
+    "case_id": "example-3",
+    "prompt": "A watercolor illustration of a small seaside village with colorful houses and fishing boats, soft pastel colors.",
+    "seed": 45
+  }
+]
