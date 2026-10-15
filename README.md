@@ -1,78 +1,79 @@
 # pixelart-alpha2rfm
 
-从 PixArt Alpha 的 epsilon RAW 权重初始化、训练文本条件 Rectified Flow Matching（RFM）的独立代码仓库。
-RFM 从第 0 步训练至第 100,000 步，共完成 100,000 次优化器更新；第 0 步使用上述预训练权重初始化。
-本仓库对应以下训练结果，包含训练、数据缓存、权重转换、采样、验证及其本地代码依赖：
+A standalone repository for text-conditioned Rectified Flow Matching (RFM) with
+PixArt Alpha. The model starts from pretrained RAW epsilon-prediction weights and
+trains for 100,000 optimizer updates, from step 0 to step 100K.
 
-```text
-output/rfm_from_A_flux_raw_mix50_100k/
-└── resume-030000-to-100000/validation/update-100000
-```
+This repository contains the model, dataset definitions, training, preparation,
+validation, and inference code. `scripts/train_rfm.py` is the single training
+entry point. All project code is local to this repository; datasets, caches,
+checkpoints, and pretrained VAE/T5 assets must be supplied separately.
 
-仓库仅保留 RFM 训练及其准备、验证和推理流程，唯一训练入口是 `scripts/train_rfm.py`。
-数据读取、RFM loss、采样和 checkpoint 格式保持兼容。仓库可以单独移动、提交和配置 remote。
-数据集、训练缓存、初始化权重、训练 checkpoint、VAE/T5 模型属于外部资源，未复制进仓库。
-运行时需要安装 Python 依赖并准备这些资源，不需要导入原项目的 Python 源码。
+## Experiment configuration
 
-## 对应的实验
+The experiment is defined in [configs/rfm.py](configs/rfm.py).
 
-| 项目 | 设置 |
+| Setting | Value |
 | --- | --- |
-| 模型 | PixArt XL/2，512×512，QK RMSNorm |
-| 初始化 | `A_flux1_dev_mix50/checkpoint-010000` 的 RAW epsilon 权重 |
-| 输出头 | 4 通道，初始训练时将输出头置零；续训及验证加载已训练输出头 |
-| RFM 路径 | `x(t) = (1-t) × noise + t × data` |
-| 训练目标 | `data - noise`，无加权 MSE |
-| 时间 | 连续均匀采样，模型时间嵌入 `999 × (1-t)` |
-| 数据 | FluxLocalizedNarratives 50,000 张；FluxSynth 76,708 张 |
-| 混合比例 | 每张 GPU 每个 batch 严格 4+4，两组各 50% |
-| 训练规模 | 4 GPU，每卡 batch 8，全局 batch 32，无梯度累积 |
-| 数值设置 | BF16，关闭梯度检查点 |
-| 优化器 | AdamW，LR `1e-5`，warmup 500，weight decay 0 |
-| EMA / 文本 dropout | `0.9999` / `0.1` |
-| 训练步数 | 0–100K，共 100,000 次优化器更新 |
-| 验证 | RAW 和 EMA；`dopri5`，CFG 4，atol `1e-6`，rtol `1e-3` |
-| 验证种子 | 42、43、44、45 |
+| Model | PixArt XL/2, 512 × 512, QK RMSNorm |
+| Initialization | RAW epsilon weights from `A_flux1_dev_mix50/checkpoint-010000` |
+| Output head | Four channels; zero-initialized for new training |
+| Flow path | `x(t) = (1 - t) * noise + t * data` |
+| Target and loss | `data - noise`, unweighted MSE |
+| Time sampling | Continuous uniform sampling; model time embedding `999 * (1 - t)` |
+| Datasets | FluxLocalizedNarratives: 50,000 images; FluxSynth: 76,708 images |
+| Data mixture | Exactly four samples from each dataset per GPU batch |
+| Batch size | Four GPUs × eight samples; global batch size 32; no gradient accumulation |
+| Precision | BF16; gradient checkpointing disabled |
+| Optimizer | AdamW, learning rate `1e-5`, 500 warmup updates, zero weight decay |
+| EMA decay | `0.9999` |
+| Text dropout | `0.1` |
+| Training duration | 100,000 optimizer updates, from step 0 to step 100K |
+| Validation | RAW and EMA weights; `dopri5`, CFG 4, `atol=1e-6`, `rtol=1e-3` |
+| Validation seeds | 42, 43, 44, 45 |
 
-`dopri5` 使用自适应步长，配置中的 `sampling_steps=50` 不表示固定执行 50 步。
-每次验证的采样参数和函数调用次数保存在验证输出目录的 `sampler.json` 中。
+The trained output head is restored unchanged when resuming or sampling.
+`dopri5` uses adaptive steps: `sampling_steps=50` does not impose 50 sampling
+steps. Each validation run records its sampler settings and number of function
+evaluations in `sampler.json`.
 
-## 目录
+## Repository layout
 
 ```text
-run.sh                                # train / validate / inference 统一 Bash 启动器
+run.sh                                # Bash launcher for train, validate, and inference
 configs/
-  rfm.py                              # 唯一训练配置，参数和资源路径直接在此修改
+  rfm.py                              # Experiment settings and resource paths
 examples/
-  validation_prompts.json              # 初始化使用的四组验证 prompt/seed
-  inference_prompts.json               # 自定义推理输入示例，含 case_id
-diffusion/
-  rectified_flow.py                    # RFM loss、Heun / dopri5 采样
-  model/                              # PixArt XL/2 网络及 T5 文本编码
-  utils/rfm_checkpoint.py             # RFM checkpoint、EMA、随机状态、文本 dropout
-  utils/theta_import.py               # 初始化权重转换及来源记录
+  validation_prompts.json             # Four fixed validation prompts and seeds
+  inference_prompts.json              # Example custom prompts with case IDs
 datasets/
-  rfm_data.py                          # CachedDataset 定义及配套读取、采样逻辑
+  rfm_data.py                         # CachedDataset, cache loading, and balanced sampling
+diffusion/
+  rectified_flow.py                   # RFM loss and Heun/dopri5 sampling
+  model/                              # PixArt XL/2 and T5 text encoding
+  utils/rfm_checkpoint.py             # Checkpoints, EMA, RNG state, and text dropout
+  utils/theta_import.py               # Pretrained weight conversion and provenance
 scripts/
-  train_rfm.py                         # 直接训练或 --launch 后台准备/启动，含 RAW/EMA 验证
-  validate_rfm.py                      # 从 checkpoint 调用原始验证函数
-  inference_rfm.py                     # 自定义文本推理，Heun 采样
+  train_rfm.py                        # Training, resume, validation, and optional background launch
+  validate_rfm.py                     # RAW/EMA validation from a checkpoint
+  inference_rfm.py                    # Custom text-to-image inference
   preparation/
-    cache_synthetic_dataset.py         # 生成 VAE posterior / T5 缓存
-    encode_image_latents.py            # 图像预处理和 latent 缓存生成
-    prepare_theta_v.py                 # RAW epsilon 权重转换和固定文本条件缓存
-    verify_rfm_smoke.py                # 连续训练/续训对照验证
-tests/                                # RFM、缓存校验、QKNorm、文本条件及 checkpoint 恢复
+    cache_synthetic_dataset.py        # VAE posterior and T5 embedding caches
+    encode_image_latents.py           # Image preprocessing and latent caching
+    prepare_theta_v.py                # Initialization weights and fixed text conditioning
+    verify_rfm_smoke.py               # Continuous-training versus resume verification
+tests/                               # Loss, sampling, data, entry point, and checkpoint checks
 ```
 
-`datasets/` 用于数据集定义，包含 `CachedDataset` 及其配套的读取、采样逻辑；缓存生成、权重转换等离线准备工具放在 `scripts/preparation/`。
-`scripts/train_rfm.py` 同时提供直接训练和后台准备/启动两种方式。初始化脚本仍读取 epsilon 预训练权重；
-RFM 训练和采样仅使用 `rectified_flow.py`，不再依赖旧版 VP diffusion 求解器。
+Dataset definitions and runtime data loading live in `datasets/`. Offline asset
+preparation tools live in `scripts/preparation/`.
 
-## 安装
+## Installation
 
-提取时使用 Linux、Python 3.12.13、PyTorch `2.9.1+cu129`。
-`requirements.txt` 记录本次观察到的主要依赖版本；它不是训练当日完整环境锁文件。
+The observed runtime used Linux, Python 3.12.13, and PyTorch `2.9.1+cu129`.
+[requirements.txt](requirements.txt) records the main dependency versions observed
+during extraction; it is not a complete lockfile of the original training
+environment.
 
 ```bash
 python3.12 -m venv .venv
@@ -82,65 +83,83 @@ python -m pip install torch==2.9.1 torchvision==0.24.1 --index-url https://downl
 python -m pip install -r requirements.txt
 ```
 
-CUDA 驱动和 GPU 需要与所选 Torch/xformers 环境兼容。完整训练使用 4 张支持 BF16 的 GPU。
-已存在兼容 PixArt 环境时，也可以沿用它。
+Use a CUDA driver and GPU compatible with the selected PyTorch/xformers build.
+The default training configuration uses four GPUs with BF16 support. An existing
+compatible PixArt environment can also be used.
 
-下面除特别注明外，均在本仓库根目录运行，使用 `python -m ...` 使本仓库代码可导入。
+Run the following commands from the repository root unless stated otherwise.
 
-## 统一 Bash 启动器
+## Bash launcher
 
-接口为 `bash run.sh <train|validate|inference> <config.py> [其他参数]`，配置文件是必填参数。
-准备好下面列出的数据和模型资源后，可以使用：
+```text
+bash run.sh <train|validate|inference> <config.py> [arguments...]
+```
+
+The configuration path is required. After preparing the resources described
+below, use:
 
 ```bash
-# 训练：自动按 config['world_size'] 启动 torchrun
+# Train using config['world_size'] distributed workers.
 CUDA_VISIBLE_DEVICES=0,1,2,3 bash run.sh train configs/rfm.py
 
-# 验证：同时生成 RAW 和 EMA 结果
+# Validate both RAW and EMA weights.
 CUDA_VISIBLE_DEVICES=0 bash run.sh validate configs/rfm.py \
   --checkpoint output/rfm_mix50/checkpoints/update-100000.pth \
   --output output/validation-100000
 
-# 自定义文本推理
+# Generate images from custom prompts using EMA weights.
 CUDA_VISIBLE_DEVICES=0 bash run.sh inference configs/rfm.py \
   --checkpoint output/rfm_mix50/checkpoints/update-100000.pth \
   --prompts examples/inference_prompts.json \
   --weights ema --output output/inference-100000
 ```
 
-启动器会切换到仓库根目录，所有相对路径均以仓库根目录为基准。设置 `PYTHON_BIN` 可选择
-Python 环境，例如 `PYTHON_BIN=/path/to/env/bin/python bash run.sh train configs/rfm.py`。
-`CUDA_VISIBLE_DEVICES` 原样传递；validate/inference 使用可见设备中的第一张 GPU。
+The launcher changes to the repository root, so all relative paths are resolved
+from there. Set `PYTHON_BIN` to select an interpreter:
 
-训练模式将额外参数直接传给 trainer，支持 `--resume`、`--work-dir` 等；传入 `--launch`
-则使用下文的后台准备流程。`bash run.sh train configs/rfm.py --help` 只显示帮助，不启动训练进程。
+```bash
+PYTHON_BIN=/path/to/env/bin/python bash run.sh train configs/rfm.py
+```
 
-验证和推理读取指定配置的 `conditioning_cache`、`vae_path` 和采样参数，模型结构必须与
-checkpoint 相符。`--conditioning-cache`、`--vae-path` 可覆盖资源路径。
-验证保留 checkpoint 的固定 prompt/seed，并校验 conditioning 缓存哈希；推理的 prompt/seed
-由 `--prompts` 指定，可用 `--cfg`、`--steps`、`--method`、`--atol`、`--rtol` 覆盖采样配置。
-当前 `configs/rfm.py` 使用 dopri5、CFG 4；dopri5 的调用次数由自适应求解决定，`--steps` 只影响 Heun。
+`CUDA_VISIBLE_DEVICES` is passed through unchanged. Validation and inference use
+the first visible GPU. Training arguments such as `--resume` and `--work-dir` are
+forwarded to the trainer. `bash run.sh train configs/rfm.py --help` displays help
+without starting distributed workers.
 
-## 外部资源和从零训练
+Validation and inference read resource paths and sampling settings from the
+specified configuration. Its model architecture and flow conventions must match
+the checkpoint. Use `--conditioning-cache` and `--vae-path` to override resource
+paths. Both modes require a new or empty output directory.
 
-推荐为 `configs/rfm.py` 准备以下布局。资源可以复制，也可以由你建立指向数据盘的软链接：
+Validation uses the checkpoint's fixed prompts and seeds and verifies the
+conditioning cache against its recorded SHA-256 hash. Inference reads prompts
+and seeds from `--prompts`; `--cfg`, `--steps`, `--method`, `--atol`, and `--rtol`
+override the sampling configuration. `--steps` affects Heun only.
+
+## Prepare external resources
+
+The default configuration expects this layout. Resources may be copied into the
+repository or provided through symbolic links to existing storage.
 
 ```text
-assets/source_model/                  # 原 checkpoint-010000，含 transformer/、scheduler/
-assets/pixart/                        # 官方模型 snapshot，含 vae/、tokenizer/、text_encoder/
+assets/source_model/                  # Pretrained checkpoint with transformer/ and scheduler/
+assets/pixart/                        # Model snapshot with vae/, tokenizer/, and text_encoder/
 data/synth_images/flux1_dev_localized_narratives_synth512/
 data/synth_images/flux1_dev_synth512/
-output/theta_raw_to_v_setup/          # initial_raw_epsilon.pth、conditioning.pt
+output/theta_raw_to_v_setup/           # initial_raw_epsilon.pth and conditioning.pt
 output/datasets_512/FluxLocalizedNarratives/
 output/datasets_512/FluxSynth/
 ```
 
-两个原始数据集各自需要 `metadata.jsonl`。训练缓存目录各自需要 `cache_settings.json`、
-`training_metadata.jsonl`、`latents/*.npz` 和 `t5_embeddings/*.npz`。
-训练入口会检查源 metadata、缓存数量、来源路径及 SHA-256。移动原始数据路径后，
-已有缓存的来源路径可能不再匹配；应重新准备缓存，或保留原资源路径。
+Each source dataset needs a `metadata.jsonl` file. Each completed training cache
+needs `cache_settings.json`, `training_metadata.jsonl`, `latents/*.npz`, and
+`t5_embeddings/*.npz`.
 
-生成初始化权重和固定验证条件：
+The trainer checks source metadata, cache counts, source paths, and SHA-256 hashes.
+Moving a source dataset can invalidate the paths recorded in an existing cache;
+regenerate the cache or preserve its original source paths.
+
+### Initialization weights and validation conditioning
 
 ```bash
 python -m scripts.preparation.prepare_theta_v \
@@ -150,104 +169,176 @@ python -m scripts.preparation.prepare_theta_v \
   --output output/theta_raw_to_v_setup
 ```
 
-本次使用的官方 snapshot ID 是 `50f702106901db6d0f8b67eb88e814c56ded2692`。
-原 `cache_synthetic_dataset.py` 保留了 `Path.home()/.cache/huggingface/hub/...` 下的该 snapshot 路径；
-缓存生成前需在那个位置提供模型，或修改脚本中的 `snapshot` 指向 `assets/pixart`。
-例如，单进程生成第一组缓存：
+The reference experiment used the PixArt snapshot
+`50f702106901db6d0f8b67eb88e814c56ded2692`.
+
+### Dataset caches
+
+`cache_synthetic_dataset.py` currently uses that snapshot at:
+
+```text
+~/.cache/huggingface/hub/models--PixArt-alpha--PixArt-XL-2-512x512/snapshots/50f702106901db6d0f8b67eb88e814c56ded2692
+```
+
+Provide the model there or update the script's `snapshot` variable to point to
+`assets/pixart` before generating caches.
+
+Generate and finalize the first dataset cache with one process:
 
 ```bash
 python -m scripts.preparation.cache_synthetic_dataset \
   --source data/synth_images/flux1_dev_localized_narratives_synth512 \
   --output output/datasets_512/FluxLocalizedNarratives --shards 1 --shard 0
+
 python -m scripts.preparation.cache_synthetic_dataset \
   --source data/synth_images/flux1_dev_localized_narratives_synth512 \
   --output output/datasets_512/FluxLocalizedNarratives --shards 1 --finalize
 ```
 
-第二组同样执行以上两条命令，将 source 换为 `data/synth_images/flux1_dev_synth512`，
-output 换为 `output/datasets_512/FluxSynth`。多 GPU 缓存可以使用 `--shards 4`，
-分别启动 `--shard 0` 至 `--shard 3`，完成后用相同 `--shards 4 --finalize` 合并。
+Repeat both commands for the second dataset, using
+`data/synth_images/flux1_dev_synth512` as the source and
+`output/datasets_512/FluxSynth` as the output.
 
-资源准备好后启动新训练：
+For four-GPU cache preparation, run four workers with `--shards 4` and distinct
+`--shard` values from 0 through 3, assigning one GPU to each worker. Once every
+worker finishes, finalize with `--shards 4 --finalize`.
+
+## Training
+
+After preparing all resources, start a new run:
 
 ```bash
-OMP_NUM_THREADS=4 HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 \
-python -m torch.distributed.run --standalone --nproc_per_node=4 \
-  scripts/train_rfm.py configs/rfm.py
+HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  bash run.sh train configs/rfm.py
 ```
 
-新训练输出至 `output/rfm_mix50`。重新启动或续训必须使用新的 `--work-dir`。
-原启动器已合并到同一入口。需要运行原来的“缓存准备 → 后台训练”流程时，使用：
+The default output directory is `output/rfm_mix50`. Use a new `--work-dir` when
+starting another run or resuming an existing one. The launcher defaults
+`OMP_NUM_THREADS` to 4 and starts `torch.distributed.run` with the configured
+number of workers.
+
+### Optional background preparation and training
+
+The training entry point also supports the original background controller:
 
 ```bash
-python -m scripts.train_rfm configs/rfm.py --launch
+bash run.sh train configs/rfm.py --launch
 ```
 
-`--launch` 只用于新训练，需要先提供 `output/rfm_mix50_smoke/verification.json` 中通过的验证记录、
-对应的 pilot cache，以及初始化权重和模型资源；它保留原控制器的四 GPU、每卡 batch 8 检查。
-缓存已经准备好时，直接使用上面的 `torchrun` 命令即可，无需这些 smoke 记录。
+This mode requires a passing `output/rfm_mix50_smoke/verification.json`, the
+corresponding pilot caches, initialization weights, and model assets. It enforces
+four GPUs and a per-GPU batch size of eight. If the full caches already exist,
+use direct training as shown above; the smoke verification artifacts are not
+required for that path.
 
-后台流程的状态和控制器日志保存在工作目录的 `preparation/status.json`、`preparation/controller.log`，
-训练日志保存在 `console.log`。`--work-dir`、`--max-train-steps`、`--validate-every-updates` 和
-`--save-every-updates` 在两种方式下均可使用，后台模式会将它们传递给实际训练进程。
-断点恢复使用下面的直接训练方式；不要将 `--launch` 与 `--resume` 或 `torchrun` 一起使用。
+Controller state and logs are written to `preparation/status.json` and
+`preparation/controller.log` under the work directory. Training output is logged
+to `console.log`.
 
-## 断点恢复（可选）
+Both launch modes accept `--work-dir`, `--max-train-steps`,
+`--validate-every-updates`, and `--save-every-updates`. Background mode forwards
+these settings to the training process. `--launch` is for new training only and
+cannot be combined with `--resume` or invoked under `torchrun`.
 
-使用同一份 `configs/rfm.py` 和训练时的资源路径，从已保存的 checkpoint 继续训练。
-例如，从本仓库新训练的第 5,000 步恢复，输出到新目录：
+### Resume training
+
+Use the same configuration and resource paths as the saved run, with a new output
+directory. For example, resume a run from step 5,000 toward a total of 100,000
+optimizer updates:
 
 ```bash
-OMP_NUM_THREADS=4 HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 \
-python -m torch.distributed.run --standalone --nproc_per_node=4 \
-  scripts/train_rfm.py configs/rfm.py \
+HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  bash run.sh train configs/rfm.py \
   --resume output/rfm_mix50/checkpoints/update-005000.pth \
   --work-dir output/rfm_mix50_resumed \
   --max-train-steps 100000
 ```
 
-trainer 会严格比较 checkpoint 的训练配置和数据哈希，只允许改变工作目录、
-总步数以及保存/验证/日志频率。恢复前不要修改配置中的其他参数或资源路径。
+The trainer strictly compares the checkpoint's configuration and data hashes.
+Only the work directory, total update count, and save/validation/logging intervals
+may change. Preserve all other training settings and resource paths.
 
-若要恢复原项目生成的 checkpoint，需将 `configs/rfm.py` 的相关字段设为该 checkpoint
-记录的原值，并使用能正确解析那些路径的工作目录；不能直接使用当前示例中的
-`assets/source_model`、`assets/pixart/vae` 替换历史路径，否则会触发
-`Resume changed training semantics`。仓库不再维护另一份历史配置。
+To resume a checkpoint from the original project, restore the configuration
+values recorded in that checkpoint and make its paths resolve correctly. The
+example paths `assets/source_model` and `assets/pixart/vae` cannot replace
+historical paths during resume without triggering `Resume changed training
+semantics`. No separate historical configuration is maintained in this repository.
 
-## 重新生成 100,000 步验证图
+## Validation and reproduction
 
-新增入口 `scripts/validate_rfm.py` 直接调用复制的 `train_rfm.validate`，
-使用 checkpoint 中的 sampler 配置和原始固定条件，同时生成 RAW/EMA。
-以下命令可在当前机器的本仓库根目录执行：
+`scripts/validate_rfm.py` calls the same validation function used during training.
+It produces four RAW and four EMA images, along with latent tensors, prompts,
+and sampler metadata under `<output>/validation/update-<step>/`. The effective
+configuration is saved as `<output>/validation_config.json`.
+
+For the original 100K checkpoint, the following command uses assets from the
+parent workspace and the local Hugging Face cache:
 
 ```bash
-RFM_ASSET_WORKSPACE=/home/yyh/python_workspaces/pixelart-alpha-v
-CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 python -m scripts.validate_rfm \
-  --checkpoint "$RFM_ASSET_WORKSPACE/output/rfm_from_A_flux_raw_mix50_100k/resume-030000-to-100000/checkpoints/update-100000.pth" \
-  --conditioning-cache "$RFM_ASSET_WORKSPACE/output/theta_raw_to_v_setup/conditioning.pt" \
-  --vae-path /home/yyh/.cache/huggingface/hub/models--PixArt-alpha--PixArt-XL-2-512x512/snapshots/50f702106901db6d0f8b67eb88e814c56ded2692/vae \
+CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 \
+  bash run.sh validate configs/rfm.py \
+  --checkpoint ../output/rfm_from_A_flux_raw_mix50_100k/resume-030000-to-100000/checkpoints/update-100000.pth \
+  --conditioning-cache ../output/theta_raw_to_v_setup/conditioning.pt \
+  --vae-path "$HOME/.cache/huggingface/hub/models--PixArt-alpha--PixArt-XL-2-512x512/snapshots/50f702106901db6d0f8b67eb88e814c56ded2692/vae" \
   --output output/revalidate-100000
 ```
 
-结果保存在 `output/revalidate-100000/validation/update-100000/`。
-不同 GPU 或依赖版本下重新生成的结果不保证逐像素一致。
+These resource locations are specific to the original workspace. Adjust them for
+another machine, and select an interpreter with the required dependencies using
+`PYTHON_BIN` if needed.
 
-自定义文本推理可用 `python -m scripts.inference_rfm --help`。
-该脚本接收包含 `case_id`、`prompt`、`seed` 的 JSON 列表。通过 Bash 启动器或显式 `--config`
-调用时使用指定配置的资源路径和采样参数；直接调用 Python 且不传 `--config` 时，保留旧行为：
-从 checkpoint 读取资源路径，使用 Heun 40 步、CFG 2。
+A local verification through `run.sh` reproduced all eight original 100K PNGs
+byte for byte and both latent tensors exactly. RAW and EMA sampling used 182 and
+176 function evaluations, respectively. Identical results are not guaranteed
+across GPU models or dependency versions.
 
-## 检查代码
+When calling `python -m scripts.validate_rfm` directly without `--config`, sampler
+settings and default resource paths come from the checkpoint. Resource paths can
+still be overridden with `--conditioning-cache` and `--vae-path`.
+
+## Custom inference
+
+Supply a JSON list with a unique filename-safe `case_id`, a nonempty `prompt`,
+and a nonnegative integer `seed` for each image:
+
+```json
+[
+  {
+    "case_id": "example-01",
+    "prompt": "A small cabin beside a lake at sunrise",
+    "seed": 42
+  }
+]
+```
+
+Use [examples/inference_prompts.json](examples/inference_prompts.json) as a
+starting point. Select weights with `--weights raw` or `--weights ema`; the
+default is `raw`.
+
+Inference needs `tokenizer/` and `text_encoder/` alongside the configured `vae/`
+directory. Prompts are lowercased and stripped before encoding and must fit the
+120-token training limit. The output includes one PNG per case,
+`prompt_embeddings.pt`, and a `validation.json` report.
+
+Through `run.sh`, sampling defaults come from the supplied configuration:
+`configs/rfm.py` uses dopri5 and CFG 4. Direct Python invocation without `--config`
+uses checkpoint resource paths and defaults to Heun with 40 steps and CFG 2.
+
+## Checks
 
 ```bash
 python -m pytest -q tests
-python -m scripts.validate_rfm --help
-python -m scripts.train_rfm --help
+bash run.sh train configs/rfm.py --help
+bash run.sh validate configs/rfm.py --help
+bash run.sh inference configs/rfm.py --help
 ```
 
-这些测试可以在 CPU 上运行，覆盖 RFM loss/采样、数据读取、采样游标及 checkpoint 恢复。
-完整训练和图像验证需要 CUDA。
+The tests run on CPU and cover RFM loss and sampling, dataset loading, sampling
+cursors, checkpoint restoration, and launcher behavior. Training and image
+generation require CUDA.
 
-## 许可
-沿用原项目的 Apache-2.0 [LICENSE](LICENSE)，并保留复制文件中的作者及许可证声明。
-外部模型和数据的许可应按各自来源处理。
+## License
+
+The code retains the original project's Apache-2.0 [LICENSE](LICENSE) and the
+author and license notices in copied files. External models and datasets remain
+subject to their respective licenses.
