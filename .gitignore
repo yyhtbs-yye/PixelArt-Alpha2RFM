@@ -10,3 +10,4 @@ assets/
 *.egg-info/
 build/
 dist/
+*.pth
